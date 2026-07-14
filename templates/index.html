@@ -3,338 +3,532 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Bot Monitor</title>
+  <title>Bot Monitor / NOC</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
   <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
 
     :root {
-      --bg: #0d0f14;
-      --surface: #141720;
-      --border: #1e2230;
-      --green: #00e676;
-      --red: #ff5252;
-      --yellow: #ffd740;
-      --blue: #40c4ff;
-      --purple: #ce93d8;
-      --gray: #546e7a;
-      --text: #cfd8dc;
-      --dim: #607d8b;
+      --bg-base: #060709;
+      --bg-panel: #0E1015;
+      --bg-surface: #14161C;
+      --bg-hover: #1D1F27;
+      --border: #232630;
+      --border-light: #2E323E;
+      
+      --text-main: #E2E4E9;
+      --text-muted: #8A8F9E;
+      --text-dim: #5F6474;
+      
+      --accent: #00E5FF;
+      --accent-dim: rgba(0, 229, 255, 0.15);
+      
+      --color-success: #10B981;
+      --color-success-dim: rgba(16, 185, 129, 0.15);
+      
+      --color-error: #F43F5E;
+      --color-error-dim: rgba(244, 63, 94, 0.15);
+      
+      --color-warn: #F59E0B;
+      --color-warn-dim: rgba(245, 158, 11, 0.15);
+      
+      --color-info: #3B82F6;
+      --color-info-dim: rgba(59, 130, 246, 0.15);
+
+      --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+      --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
     }
 
     body {
-      background: var(--bg);
-      color: var(--text);
-      font-family: 'Courier New', monospace;
-      min-height: 100vh;
+      background: var(--bg-base);
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      height: 100vh;
       display: flex;
       flex-direction: column;
+      overflow: hidden;
+      font-size: 14px;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
     }
 
     /* ── Header ── */
     header {
-      background: var(--surface);
+      height: 52px;
+      background: var(--bg-panel);
       border-bottom: 1px solid var(--border);
-      padding: 14px 24px;
       display: flex;
       align-items: center;
+      padding: 0 20px;
       gap: 16px;
+      flex-shrink: 0;
     }
-    header h1 {
-      font-size: 1.1rem;
-      letter-spacing: .12em;
-      color: var(--green);
+    .header-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 600;
+      font-size: 13px;
+      letter-spacing: 0.05em;
+      color: var(--text-main);
       text-transform: uppercase;
     }
-    .pulse-dot {
-      width: 10px; height: 10px;
-      border-radius: 50%;
-      background: var(--green);
-      flex-shrink: 0;
-      box-shadow: 0 0 0 0 rgba(0,230,118,.6);
-      animation: pulse 1.4s ease-in-out infinite;
-    }
-    @keyframes pulse {
-      0%   { box-shadow: 0 0 0 0 rgba(0,230,118,.6); }
-      70%  { box-shadow: 0 0 0 8px rgba(0,230,118,0); }
-      100% { box-shadow: 0 0 0 0 rgba(0,230,118,0); }
+    .header-title svg {
+      color: var(--accent);
     }
     .target-badge {
-      font-size: .7rem;
-      color: var(--blue);
-      background: rgba(64,196,255,.08);
-      border: 1px solid rgba(64,196,255,.2);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--accent);
+      background: var(--accent-dim);
+      border: 1px solid rgba(0, 229, 255, 0.3);
       border-radius: 4px;
-      padding: 3px 10px;
-      letter-spacing: .04em;
+      padding: 4px 10px;
     }
-    .status-label {
-      font-size: .75rem;
-      color: var(--dim);
+    .status-indicator {
       margin-left: auto;
-      letter-spacing: .08em;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.1em;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      padding: 4px 12px;
+      border-radius: 4px;
+    }
+    .pulse-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--color-success);
+      box-shadow: 0 0 0 0 var(--color-success-dim);
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+      70% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
     }
 
-    /* ── Main layout ── */
+    /* ── Main Layout ── */
     main {
       flex: 1;
-      display: grid;
-      grid-template-columns: 240px 1fr;
-      grid-template-rows: auto 1fr;
-      gap: 0;
-      overflow: hidden;
+      min-height: 0; /* Ensures inner scrolling works */
+      display: flex;
     }
 
     /* ── Sidebar ── */
-    .panel {
-      background: var(--surface);
+    .sidebar {
+      width: 320px;
+      background: var(--bg-panel);
       border-right: 1px solid var(--border);
-      padding: 20px;
       display: flex;
       flex-direction: column;
-      gap: 14px;
       overflow-y: auto;
-      grid-row: 1 / 3;
+      flex-shrink: 0;
     }
-    .panel-title {
-      font-size: .65rem;
-      color: var(--dim);
-      text-transform: uppercase;
-      letter-spacing: .12em;
-      margin-bottom: 4px;
+    .sidebar::-webkit-scrollbar {
+      width: 6px;
+    }
+    .sidebar::-webkit-scrollbar-thumb {
+      background: var(--border-light);
+      border-radius: 3px;
     }
 
-    /* ── Stat cards ── */
+    .section {
+      padding: 20px;
+      border-bottom: 1px solid var(--border);
+    }
+    .section:last-child {
+      border-bottom: none;
+    }
+    .section-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .section-title svg {
+      color: var(--text-dim);
+    }
+
+    /* ── Stats ── */
     .stats-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 8px;
+      gap: 12px;
     }
     .stat-card {
-      background: var(--bg);
+      background: var(--bg-surface);
       border: 1px solid var(--border);
-      border-radius: 5px;
-      padding: 10px 12px;
+      border-radius: 6px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      transition: border-color 0.2s, background-color 0.2s;
     }
-    .stat-card .val {
-      font-size: 1.4rem;
-      font-weight: 700;
+    .stat-card:hover {
+      border-color: var(--border-light);
+      background-color: var(--bg-hover);
+    }
+    .stat-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .stat-val {
+      font-family: var(--font-mono);
+      font-size: 20px;
+      font-weight: 500;
       line-height: 1;
     }
-    .stat-card .lbl {
-      font-size: .62rem;
-      color: var(--dim);
-      text-transform: uppercase;
-      letter-spacing: .1em;
-      margin-top: 3px;
-    }
-    .stat-card.green  .val { color: var(--green);  }
-    .stat-card.red    .val { color: var(--red);    }
-    .stat-card.blue   .val { color: var(--blue);   }
-    .stat-card.yellow .val { color: var(--yellow); }
 
-    /* ── Info rows ── */
-    .info-row {
-      background: var(--bg);
+    /* Utility Colors */
+    .text-info { color: var(--color-info); }
+    .text-success { color: var(--color-success); }
+    .text-error { color: var(--color-error); }
+    .text-warn { color: var(--color-warn); }
+    .text-accent { color: var(--accent); }
+
+    /* ── Info Rows ── */
+    .info-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .info-item {
+      background: var(--bg-surface);
       border: 1px solid var(--border);
-      border-radius: 5px;
+      border-radius: 6px;
       padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      transition: border-color 0.2s, background-color 0.2s;
     }
-    .info-row .lbl {
-      font-size: .62rem;
-      color: var(--dim);
+    .info-item:hover {
+      border-color: var(--border-light);
+      background-color: var(--bg-hover);
+    }
+    .info-lbl {
+      font-size: 10px;
+      color: var(--text-muted);
       text-transform: uppercase;
-      letter-spacing: .1em;
-      margin-bottom: 4px;
+      letter-spacing: 0.1em;
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
-    .info-row .val {
-      font-size: .78rem;
+    .info-val {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-main);
       word-break: break-all;
     }
-    .info-row .val.yellow  { color: var(--yellow); }
-    .info-row .val.purple  { color: var(--purple); }
-    .info-row .val.green   { color: var(--green);  }
 
-    .divider {
-      border: none;
-      border-top: 1px solid var(--border);
+    /* ── Tip / Cron ── */
+    .cron-tip {
+      background: var(--color-info-dim);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      border-radius: 6px;
+      padding: 12px;
     }
-
-    /* ── Ping tip ── */
-    .ping-tip {
-      background: rgba(64,196,255,.05);
-      border: 1px solid rgba(64,196,255,.15);
-      border-radius: 5px;
-      padding: 10px 12px;
-      font-size: .68rem;
-      color: var(--dim);
-      line-height: 1.6;
+    .cron-tip p {
+      font-size: 11px;
+      color: var(--text-muted);
+      line-height: 1.5;
+      margin-bottom: 8px;
     }
-    .ping-tip strong { color: var(--blue); }
-    .ping-tip code {
+    .cron-tip strong {
+      color: var(--color-info);
+      font-weight: 600;
+    }
+    .cron-tip code {
       display: block;
-      margin-top: 6px;
-      background: var(--bg);
-      border-radius: 3px;
-      padding: 4px 6px;
-      font-size: .65rem;
-      color: var(--green);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-main);
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      padding: 6px 8px;
+      border-radius: 4px;
       word-break: break-all;
     }
 
-    /* ── Log area ── */
-    .log-header {
-      background: var(--surface);
+    /* ── Log Panel ── */
+    .log-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      background: var(--bg-base);
+    }
+    .log-toolbar {
+      height: 40px;
+      background: var(--bg-panel);
       border-bottom: 1px solid var(--border);
-      padding: 12px 20px;
       display: flex;
       align-items: center;
       justify-content: space-between;
+      padding: 0 20px;
+      flex-shrink: 0;
     }
-    .log-header span {
-      font-size: .68rem;
-      color: var(--dim);
+    .log-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
       text-transform: uppercase;
-      letter-spacing: .1em;
+      letter-spacing: 0.1em;
+      display: flex;
+      align-items: center;
+      gap: 8px;
     }
     .btn-clear {
-      background: none;
+      background: var(--bg-surface);
       border: 1px solid var(--border);
-      border-radius: 3px;
-      color: var(--dim);
-      font-family: inherit;
-      font-size: .65rem;
-      padding: 3px 9px;
+      color: var(--text-muted);
+      font-family: var(--font-sans);
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      padding: 4px 10px;
+      border-radius: 4px;
       cursor: pointer;
-      letter-spacing: .08em;
-      transition: color .2s, border-color .2s;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s;
     }
-    .btn-clear:hover { color: var(--text); border-color: var(--dim); }
+    .btn-clear:hover {
+      background: var(--bg-hover);
+      color: var(--text-main);
+      border-color: var(--border-light);
+    }
 
-    #log {
+    .log-container {
       flex: 1;
       overflow-y: auto;
-      padding: 14px 20px;
-      font-size: .78rem;
-      line-height: 1.7;
-      display: flex;
-      flex-direction: column;
-      gap: 1px;
+      padding: 16px 20px;
     }
-    .log-line { white-space: pre-wrap; word-break: break-all; }
-    .log-line.ok     { color: var(--green);  }
-    .log-line.fail   { color: var(--red);    }
-    .log-line.try    { color: var(--text);   }
-    .log-line.fetch  { color: var(--blue);   }
-    .log-line.info   { color: var(--yellow); }
-    .log-line.sleep  { color: var(--dim);    }
-    .log-line.start  { color: var(--green);  font-weight: bold; }
-    .log-line.warn   { color: var(--yellow); }
-    .log-line.err    { color: var(--red);    }
+    .log-container::-webkit-scrollbar {
+      width: 10px;
+    }
+    .log-container::-webkit-scrollbar-track {
+      background: var(--bg-base);
+    }
+    .log-container::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 5px;
+      border: 2px solid var(--bg-base);
+    }
+    .log-container::-webkit-scrollbar-thumb:hover {
+      background: var(--border-light);
+    }
 
-    #log::-webkit-scrollbar { width: 5px; }
-    #log::-webkit-scrollbar-track { background: transparent; }
-    #log::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    .log-line {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-all;
+      padding: 2px 6px;
+      border-radius: 3px;
+      margin-bottom: 1px;
+      border-left: 2px solid transparent;
+    }
+    .log-line:hover {
+      background: rgba(255,255,255,0.03);
+    }
+
+    /* JS Dynamic Classes */
+    .log-line.ok     { color: var(--color-success); border-left-color: var(--color-success-dim); }
+    .log-line.fail   { color: var(--color-error); border-left-color: var(--color-error-dim); }
+    .log-line.try    { color: var(--text-muted); }
+    .log-line.fetch  { color: var(--color-info); }
+    .log-line.info   { color: var(--color-warn); }
+    .log-line.sleep  { color: var(--text-dim); }
+    .log-line.start  { color: var(--color-success); font-weight: 700; border-left-color: var(--color-success); background: rgba(16,185,129,0.05); }
+    .log-line.warn   { color: var(--color-warn); }
+    .log-line.err    { color: var(--color-error); border-left-color: var(--color-error); }
 
     .empty-state {
-      margin: auto;
-      text-align: center;
-      color: var(--dim);
-      font-size: .8rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: var(--text-dim);
+      font-size: 12px;
+      font-family: var(--font-mono);
+      gap: 12px;
     }
-    .empty-state div { font-size: 2rem; margin-bottom: 10px; }
+    .empty-state svg {
+      color: var(--border-light);
+      width: 32px;
+      height: 32px;
+    }
   </style>
 </head>
 <body>
 
 <header>
-  <div class="pulse-dot"></div>
-  <h1>Bot Monitor</h1>
+  <div class="header-title">
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 2v20"></path><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+    </svg>
+    Proxy Monitor
+  </div>
   <span class="target-badge">{{ default_target }}</span>
-  <span class="status-label">RUNNING</span>
+  
+  <div class="status-indicator">
+    <div class="pulse-dot"></div>
+    System Active
+  </div>
 </header>
 
 <main>
   <!-- ── Sidebar ── -->
-  <aside class="panel">
-
-    <!-- Stats -->
-    <div>
-      <div class="panel-title">Statistics</div>
+  <aside class="sidebar">
+    
+    <!-- Stats Section -->
+    <div class="section">
+      <div class="section-title">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
+        Traffic Stats
+      </div>
       <div class="stats-grid">
-        <div class="stat-card blue">
-          <div class="val" id="statTried">0</div>
-          <div class="lbl">Tried</div>
+        <div class="stat-card">
+          <div class="stat-header">
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+            Tried
+          </div>
+          <div class="stat-val text-info" id="statTried">0</div>
         </div>
-        <div class="stat-card green">
-          <div class="val" id="statSuccess">0</div>
-          <div class="lbl">Success</div>
+        <div class="stat-card">
+          <div class="stat-header">
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+            Success
+          </div>
+          <div class="stat-val text-success" id="statSuccess">0</div>
         </div>
-        <div class="stat-card red">
-          <div class="val" id="statFailed">0</div>
-          <div class="lbl">Failed</div>
+        <div class="stat-card">
+          <div class="stat-header">
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>
+            Failed
+          </div>
+          <div class="stat-val text-error" id="statFailed">0</div>
         </div>
-        <div class="stat-card yellow">
-          <div class="val" id="statRound">0</div>
-          <div class="lbl">Round</div>
+        <div class="stat-card">
+          <div class="stat-header">
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+            Round
+          </div>
+          <div class="stat-val text-warn" id="statRound">0</div>
         </div>
       </div>
     </div>
 
-    <!-- Current proxy -->
-    <div class="info-row">
-      <div class="lbl">Current Proxy</div>
-      <div class="val yellow" id="currentProxy">—</div>
+    <!-- Active Proxy Section -->
+    <div class="section">
+      <div class="section-title">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+        Current Route
+      </div>
+      <div class="info-item">
+        <div class="info-lbl">Active Proxy Address</div>
+        <div class="info-val text-warn" id="currentProxy">—</div>
+      </div>
     </div>
 
-    <hr class="divider" />
-
-    <!-- Uptime -->
-    <div>
-      <div class="panel-title">Uptime</div>
+    <!-- System Uptime Section -->
+    <div class="section">
+      <div class="section-title">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
+        System Status
+      </div>
+      <div class="info-list">
+        <div class="info-item">
+          <div class="info-lbl">
+            <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>
+            Server Uptime
+          </div>
+          <div class="info-val text-success" id="serverUptime">—</div>
+        </div>
+        <div class="info-item">
+          <div class="info-lbl">
+            <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"></rect><circle cx="12" cy="5" r="2"></circle><path d="M12 7v4"></path><line x1="8" y1="16" x2="8.01" y2="16"></line><line x1="16" y1="16" x2="16.01" y2="16"></line></svg>
+            Bot Running Since
+          </div>
+          <div class="info-val text-success" id="botUptime">—</div>
+        </div>
+        <div class="info-item">
+          <div class="info-lbl">
+            <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+            Server Started
+          </div>
+          <div class="info-val text-accent" id="serverStarted">—</div>
+        </div>
+        <div class="info-item">
+          <div class="info-lbl">
+            <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+            Last Bot Start
+          </div>
+          <div class="info-val text-accent" id="botStarted">—</div>
+        </div>
+      </div>
     </div>
 
-    <div class="info-row">
-      <div class="lbl">Server Uptime</div>
-      <div class="val green" id="serverUptime">—</div>
-    </div>
-
-    <div class="info-row">
-      <div class="lbl">Bot Running Since</div>
-      <div class="val green" id="botUptime">—</div>
-    </div>
-
-    <div class="info-row">
-      <div class="lbl">Server Started</div>
-      <div class="val purple" id="serverStarted">—</div>
-    </div>
-
-    <div class="info-row">
-      <div class="lbl">Last Bot Start</div>
-      <div class="val purple" id="botStarted">—</div>
-    </div>
-
-    <hr class="divider" />
-
-    <!-- Cron tip -->
-    <div class="ping-tip">
-      <strong>Cron Job</strong> — ping endpoint ini setiap 5 menit agar server tidak tidur:
-      <code id="pingUrl">/ping</code>
+    <!-- Tips Section -->
+    <div class="section" style="border-bottom: none; margin-top: auto;">
+      <div class="cron-tip">
+        <p><strong>Keep-Alive Cron</strong><br>Ping endpoint ini setiap 5 menit agar server tidak tidur:</p>
+        <code id="pingUrl">/ping</code>
+      </div>
     </div>
 
   </aside>
 
-  <!-- ── Log header ── -->
-  <div class="log-header">
-    <span>Live Log</span>
-    <button class="btn-clear" onclick="clearLog()">CLEAR</button>
-  </div>
-
-  <!-- ── Log body ── -->
-  <div id="log">
-    <div class="empty-state" id="emptyState">
-      <div>⏳</div>
-      Menunggu log pertama…
+  <!-- ── Log Panel ── -->
+  <div class="log-panel">
+    <div class="log-toolbar">
+      <div class="log-title">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
+        Terminal Output
+      </div>
+      <button class="btn-clear" onclick="clearLog()">
+        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+        Clear
+      </button>
+    </div>
+    
+    <div id="log" class="log-container">
+      <div class="empty-state" id="emptyState">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+        <span>Menunggu log pertama…</span>
+      </div>
     </div>
   </div>
 </main>
