@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bot Monitor</title>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0d0f14;
+      --surface: #141720;
+      --border: #1e2230;
+      --green: #00e676;
+      --red: #ff5252;
+      --yellow: #ffd740;
+      --blue: #40c4ff;
+      --purple: #ce93d8;
+      --gray: #546e7a;
+      --text: #cfd8dc;
+      --dim: #607d8b;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Courier New', monospace;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Header ── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    header h1 {
+      font-size: 1.1rem;
+      letter-spacing: .12em;
+      color: var(--green);
+      text-transform: uppercase;
+    }
+    .pulse-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: var(--green);
+      flex-shrink: 0;
+      box-shadow: 0 0 0 0 rgba(0,230,118,.6);
+      animation: pulse 1.4s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%   { box-shadow: 0 0 0 0 rgba(0,230,118,.6); }
+      70%  { box-shadow: 0 0 0 8px rgba(0,230,118,0); }
+      100% { box-shadow: 0 0 0 0 rgba(0,230,118,0); }
+    }
+    .target-badge {
+      font-size: .7rem;
+      color: var(--blue);
+      background: rgba(64,196,255,.08);
+      border: 1px solid rgba(64,196,255,.2);
+      border-radius: 4px;
+      padding: 3px 10px;
+      letter-spacing: .04em;
+    }
+    .status-label {
+      font-size: .75rem;
+      color: var(--dim);
+      margin-left: auto;
+      letter-spacing: .08em;
+    }
+
+    /* ── Main layout ── */
+    main {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 240px 1fr;
+      grid-template-rows: auto 1fr;
+      gap: 0;
+      overflow: hidden;
+    }
+
+    /* ── Sidebar ── */
+    .panel {
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      overflow-y: auto;
+      grid-row: 1 / 3;
+    }
+    .panel-title {
+      font-size: .65rem;
+      color: var(--dim);
+      text-transform: uppercase;
+      letter-spacing: .12em;
+      margin-bottom: 4px;
+    }
+
+    /* ── Stat cards ── */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .stat-card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 10px 12px;
+    }
+    .stat-card .val {
+      font-size: 1.4rem;
+      font-weight: 700;
+      line-height: 1;
+    }
+    .stat-card .lbl {
+      font-size: .62rem;
+      color: var(--dim);
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      margin-top: 3px;
+    }
+    .stat-card.green  .val { color: var(--green);  }
+    .stat-card.red    .val { color: var(--red);    }
+    .stat-card.blue   .val { color: var(--blue);   }
+    .stat-card.yellow .val { color: var(--yellow); }
+
+    /* ── Info rows ── */
+    .info-row {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 10px 12px;
+    }
+    .info-row .lbl {
+      font-size: .62rem;
+      color: var(--dim);
+      text-transform: uppercase;
+      letter-spacing: .1em;
+      margin-bottom: 4px;
+    }
+    .info-row .val {
+      font-size: .78rem;
+      word-break: break-all;
+    }
+    .info-row .val.yellow  { color: var(--yellow); }
+    .info-row .val.purple  { color: var(--purple); }
+    .info-row .val.green   { color: var(--green);  }
+
+    .divider {
+      border: none;
+      border-top: 1px solid var(--border);
+    }
+
+    /* ── Ping tip ── */
+    .ping-tip {
+      background: rgba(64,196,255,.05);
+      border: 1px solid rgba(64,196,255,.15);
+      border-radius: 5px;
+      padding: 10px 12px;
+      font-size: .68rem;
+      color: var(--dim);
+      line-height: 1.6;
+    }
+    .ping-tip strong { color: var(--blue); }
+    .ping-tip code {
+      display: block;
+      margin-top: 6px;
+      background: var(--bg);
+      border-radius: 3px;
+      padding: 4px 6px;
+      font-size: .65rem;
+      color: var(--green);
+      word-break: break-all;
+    }
+
+    /* ── Log area ── */
+    .log-header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .log-header span {
+      font-size: .68rem;
+      color: var(--dim);
+      text-transform: uppercase;
+      letter-spacing: .1em;
+    }
+    .btn-clear {
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      color: var(--dim);
+      font-family: inherit;
+      font-size: .65rem;
+      padding: 3px 9px;
+      cursor: pointer;
+      letter-spacing: .08em;
+      transition: color .2s, border-color .2s;
+    }
+    .btn-clear:hover { color: var(--text); border-color: var(--dim); }
+
+    #log {
+      flex: 1;
+      overflow-y: auto;
+      padding: 14px 20px;
+      font-size: .78rem;
+      line-height: 1.7;
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+    }
+    .log-line { white-space: pre-wrap; word-break: break-all; }
+    .log-line.ok     { color: var(--green);  }
+    .log-line.fail   { color: var(--red);    }
+    .log-line.try    { color: var(--text);   }
+    .log-line.fetch  { color: var(--blue);   }
+    .log-line.info   { color: var(--yellow); }
+    .log-line.sleep  { color: var(--dim);    }
+    .log-line.start  { color: var(--green);  font-weight: bold; }
+    .log-line.warn   { color: var(--yellow); }
+    .log-line.err    { color: var(--red);    }
+
+    #log::-webkit-scrollbar { width: 5px; }
+    #log::-webkit-scrollbar-track { background: transparent; }
+    #log::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    .empty-state {
+      margin: auto;
+      text-align: center;
+      color: var(--dim);
+      font-size: .8rem;
+    }
+    .empty-state div { font-size: 2rem; margin-bottom: 10px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="pulse-dot"></div>
+  <h1>Bot Monitor</h1>
+  <span class="target-badge">{{ default_target }}</span>
+  <span class="status-label">RUNNING</span>
+</header>
+
+<main>
+  <!-- ── Sidebar ── -->
+  <aside class="panel">
+
+    <!-- Stats -->
+    <div>
+      <div class="panel-title">Statistics</div>
+      <div class="stats-grid">
+        <div class="stat-card blue">
+          <div class="val" id="statTried">0</div>
+          <div class="lbl">Tried</div>
+        </div>
+        <div class="stat-card green">
+          <div class="val" id="statSuccess">0</div>
+          <div class="lbl">Success</div>
+        </div>
+        <div class="stat-card red">
+          <div class="val" id="statFailed">0</div>
+          <div class="lbl">Failed</div>
+        </div>
+        <div class="stat-card yellow">
+          <div class="val" id="statRound">0</div>
+          <div class="lbl">Round</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Current proxy -->
+    <div class="info-row">
+      <div class="lbl">Current Proxy</div>
+      <div class="val yellow" id="currentProxy">—</div>
+    </div>
+
+    <hr class="divider" />
+
+    <!-- Uptime -->
+    <div>
+      <div class="panel-title">Uptime</div>
+    </div>
+
+    <div class="info-row">
+      <div class="lbl">Server Uptime</div>
+      <div class="val green" id="serverUptime">—</div>
+    </div>
+
+    <div class="info-row">
+      <div class="lbl">Bot Running Since</div>
+      <div class="val green" id="botUptime">—</div>
+    </div>
+
+    <div class="info-row">
+      <div class="lbl">Server Started</div>
+      <div class="val purple" id="serverStarted">—</div>
+    </div>
+
+    <div class="info-row">
+      <div class="lbl">Last Bot Start</div>
+      <div class="val purple" id="botStarted">—</div>
+    </div>
+
+    <hr class="divider" />
+
+    <!-- Cron tip -->
+    <div class="ping-tip">
+      <strong>Cron Job</strong> — ping endpoint ini setiap 5 menit agar server tidak tidur:
+      <code id="pingUrl">/ping</code>
+    </div>
+
+  </aside>
+
+  <!-- ── Log header ── -->
+  <div class="log-header">
+    <span>Live Log</span>
+    <button class="btn-clear" onclick="clearLog()">CLEAR</button>
+  </div>
+
+  <!-- ── Log body ── -->
+  <div id="log">
+    <div class="empty-state" id="emptyState">
+      <div>⏳</div>
+      Menunggu log pertama…
+    </div>
+  </div>
+</main>
+
+<script>
+  const socket = io();
+  let autoScroll = true;
+  let lineCount  = 0;
+  const logEl    = document.getElementById('log');
+
+  // Uptime counters (epoch ms)
+  let serverStartMs = null;
+  let botStartMs    = null;
+
+  // ── Helpers ──────────────────────────────────────────────
+  function fmtDuration(ms) {
+    if (ms < 0) ms = 0;
+    const s  = Math.floor(ms / 1000);
+    const m  = Math.floor(s  / 60);
+    const h  = Math.floor(m  / 60);
+    const d  = Math.floor(h  / 24);
+    if (d > 0)  return `${d}d ${h % 24}h ${m % 60}m`;
+    if (h > 0)  return `${h}h ${m % 60}m ${s % 60}s`;
+    if (m > 0)  return `${m}m ${s % 60}s`;
+    return `${s}s`;
+  }
+
+  function fmtTimestamp(isoStr) {
+    if (!isoStr) return '—';
+    const d = new Date(isoStr.endsWith('Z') ? isoStr : isoStr + 'Z');
+    return d.toLocaleString();
+  }
+
+  function classForLine(msg) {
+    if (msg.startsWith('[OK]'))      return 'ok';
+    if (msg.startsWith('[FAIL]'))    return 'fail';
+    if (msg.startsWith('[TRY]'))     return 'try';
+    if (msg.startsWith('[FETCH]'))   return 'fetch';
+    if (msg.startsWith('[INFO]'))    return 'info';
+    if (msg.startsWith('[SLEEP]'))   return 'sleep';
+    if (msg.startsWith('[START]'))   return 'start';
+    if (msg.startsWith('[ROUND]'))   return 'info';
+    if (msg.startsWith('[WARN]'))    return 'warn';
+    if (msg.startsWith('[ERROR]'))   return 'err';
+    return 'try';
+  }
+
+  function appendLog(msg) {
+    const empty = document.getElementById('emptyState');
+    if (empty) empty.remove();
+    const line = document.createElement('div');
+    line.className = 'log-line ' + classForLine(msg);
+    line.textContent = msg;
+    logEl.appendChild(line);
+    lineCount++;
+    if (lineCount > 800) { logEl.removeChild(logEl.firstChild); lineCount--; }
+    if (autoScroll) logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function updateStats(stats) {
+    if (!stats) return;
+    document.getElementById('statTried').textContent    = stats.tried   ?? 0;
+    document.getElementById('statSuccess').textContent  = stats.success ?? 0;
+    document.getElementById('statFailed').textContent   = stats.failed  ?? 0;
+    document.getElementById('statRound').textContent    = stats.round   ?? 0;
+    document.getElementById('currentProxy').textContent = stats.current_proxy || '—';
+  }
+
+  function applyTimes(data) {
+    if (data.server_start_time) {
+      serverStartMs = new Date(
+        data.server_start_time.endsWith('Z')
+          ? data.server_start_time
+          : data.server_start_time + 'Z'
+      ).getTime();
+      document.getElementById('serverStarted').textContent =
+        fmtTimestamp(data.server_start_time);
+    }
+    if (data.bot_start_time) {
+      botStartMs = new Date(
+        data.bot_start_time.endsWith('Z')
+          ? data.bot_start_time
+          : data.bot_start_time + 'Z'
+      ).getTime();
+      document.getElementById('botStarted').textContent =
+        fmtTimestamp(data.bot_start_time);
+    }
+    // Show ping URL
+    document.getElementById('pingUrl').textContent =
+      window.location.origin + '/ping';
+  }
+
+  function clearLog() { logEl.innerHTML = ''; lineCount = 0; }
+
+  // ── Live uptime ticker ────────────────────────────────────
+  setInterval(() => {
+    const now = Date.now();
+    if (serverStartMs)
+      document.getElementById('serverUptime').textContent =
+        fmtDuration(now - serverStartMs);
+    if (botStartMs)
+      document.getElementById('botUptime').textContent =
+        fmtDuration(now - botStartMs);
+  }, 1000);
+
+  // ── Socket events ─────────────────────────────────────────
+  socket.on('init', (data) => {
+    updateStats(data.stats);
+    applyTimes(data);
+    if (data.logs && data.logs.length) {
+      logEl.innerHTML = '';
+      data.logs.forEach(appendLog);
+    }
+  });
+
+  socket.on('log', (data) => {
+    appendLog(data.message);
+    updateStats(data.stats);
+    if (data.bot_start_time && !botStartMs) applyTimes(data);
+  });
+
+  logEl.addEventListener('scroll', () => {
+    autoScroll = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 20;
+  });
+</script>
+</body>
+</html>
