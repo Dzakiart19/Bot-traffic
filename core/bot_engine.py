@@ -1,4 +1,5 @@
 import random
+import urllib.parse
 import requests
 from bs4 import BeautifulSoup
 import time
@@ -21,7 +22,21 @@ logging.getLogger("selenium").setLevel(logging.ERROR)
 
 DEFAULT_TARGET    = "https://dramacina--dzeckart.replit.app"
 DEFAULT_TIMEOUT   = 30
-DEFAULT_STAY_TIME = 5
+DEFAULT_STAY_TIME = 25   # Naik dari 5 → iklan perlu waktu load & terlihat
+
+# ── Organic search queries (Google referrer) ──────────────────────────────────
+SEARCH_QUERIES = [
+    "nonton drama korea online gratis",
+    "drama korea terbaru 2024 subtitle indonesia",
+    "watch korean drama free streaming",
+    "nonton drama china sub indo",
+    "drama romantis korea terbaru",
+    "streaming drama korea gratis",
+    "nonton film drama online",
+    "korean drama 2024 full episode",
+    "drama asia terbaru sub indo",
+    "nonton drama online subtitle",
+]
 
 # ── Proxy validation settings ─────────────────────────────────────────────────
 VALIDATE_TIMEOUT = 8
@@ -188,6 +203,73 @@ def _human_delay(lo=0.3, hi=1.2):
     time.sleep(random.uniform(lo, hi))
 
 
+def _set_organic_referrer(driver, timeout):
+    """
+    Singgah sebentar ke Google Search sebelum ke target.
+    Ini membuat HTTP Referer = google.com → traffic terlihat organik
+    bagi ad network (lebih dipercaya, CTR lebih tinggi).
+    """
+    query = urllib.parse.quote(random.choice(SEARCH_QUERIES))
+    try:
+        driver.get(f"https://www.google.com/search?q={query}&hl=en")
+        # Tunggu halaman Google muncul
+        try:
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
+            )
+        except Exception:
+            pass
+        # Baca sebentar seperti orang melihat hasil pencarian
+        time.sleep(random.uniform(2.0, 4.0))
+    except Exception:
+        pass  # Kalau Google tidak bisa diakses via proxy, lanjut saja
+
+
+def _visit_inner_pages(driver, base_url, log_fn):
+    """
+    Setelah halaman utama, navigasi ke 1-2 halaman dalam (internal links).
+    Meningkatkan pageview depth → lebih banyak ad impression per sesi.
+    """
+    try:
+        links = driver.find_elements(By.CSS_SELECTOR, "a[href]")
+        internal = []
+        for lnk in links[:40]:
+            try:
+                href = lnk.get_attribute("href") or ""
+                # Hanya link internal, bukan anchor/javascript, panjang wajar
+                if (href.startswith(base_url)
+                        and href.rstrip("/") != base_url.rstrip("/")
+                        and len(href) < 300
+                        and "#" not in href
+                        and "javascript" not in href):
+                    internal.append(href)
+            except Exception:
+                continue
+
+        if not internal:
+            return
+
+        # Kunjungi 1-2 halaman dalam secara acak
+        picks = random.sample(internal, min(random.randint(1, 2), len(internal)))
+        for page_url in picks:
+            try:
+                driver.get(page_url)
+                try:
+                    WebDriverWait(driver, 10).until(
+                        EC.presence_of_element_located((By.TAG_NAME, "body"))
+                    )
+                except Exception:
+                    pass
+                _human_delay(1.0, 2.5)
+                # Baca halaman dalam selama 10-18 detik
+                _read_page_naturally(driver, random.uniform(10, 18))
+                log_fn(f"[INNER] {page_url[:70]}")
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+
 def _smooth_scroll(driver, target_y, steps=6):
     """
     Scroll to target_y in small increments with random pauses,
@@ -229,24 +311,32 @@ def _move_mouse_naturally(actions, driver, target_el=None):
 
 def _read_page_naturally(driver, stay_time):
     """
-    Simulate a human reading a page:
-    - Random scroll depth (may not reach the very bottom)
-    - Pauses at various scroll positions
-    - Mouse movements while reading
-    - Occasional scroll-back (human curiosity)
-    - Total time ≈ stay_time seconds
+    Simulasi membaca halaman seperti manusia:
+    - Scroll ke 100% halaman (penting: lazy-loaded ads HARUS di-trigger)
+    - Jeda di setiap posisi scroll (memberi waktu iklan render)
+    - Gerakan mouse sambil membaca
+    - Kadang scroll balik ke atas (natural curiosity)
+    - Total waktu ≈ stay_time detik
     """
     try:
-        page_h    = driver.execute_script("return document.body.scrollHeight;")
+        page_h     = driver.execute_script("return document.body.scrollHeight;")
         viewport_h = driver.execute_script("return window.innerHeight;")
-        vw        = driver.execute_script("return window.innerWidth;")
+        vw         = driver.execute_script("return window.innerWidth;")
 
-        # How far user scrolls (60-100% of page)
-        max_scroll = int(page_h * random.uniform(0.6, 1.0))
-        # Build a reading path: 4-8 scroll stops
-        stops = sorted(random.sample(range(100, max_scroll, max(1, max_scroll // 10)),
-                                     min(random.randint(4, 8),
-                                         max(1, max_scroll // 100))))
+        # Selalu scroll ke 100% halaman agar semua ad slot (termasuk yang
+        # lazy-loaded di bawah fold) sempat load dan terhitung impression.
+        max_scroll = page_h
+
+        # Bangun path scroll: 6-10 titik berhenti
+        step = max(100, max_scroll // 10)
+        candidates = list(range(step, max_scroll + 1, step))
+        if not candidates:
+            candidates = [max_scroll]
+        n_stops = min(random.randint(6, 10), len(candidates))
+        stops = sorted(random.sample(candidates, n_stops))
+        # Pastikan titik terakhir adalah dasar halaman
+        if stops[-1] < max_scroll:
+            stops.append(max_scroll)
 
         elapsed = 0.0
         body = driver.find_element(By.TAG_NAME, "body")
@@ -256,50 +346,51 @@ def _read_page_naturally(driver, stay_time):
                 break
             _smooth_scroll(driver, stop)
 
-            # Pause at this scroll position (reading time)
-            pause = random.uniform(0.4, 1.8)
+            # Jeda di posisi ini — beri waktu iklan lazy-load
+            pause = random.uniform(1.2, 3.5)
             elapsed += pause
             time.sleep(pause)
 
-            # Move mouse while "reading" — occasional hover over text/links
-            if random.random() < 0.55:
+            # Gerakan mouse sambil "membaca"
+            if random.random() < 0.6:
                 try:
                     mx = random.randint(50, max(51, vw - 50))
                     my = random.randint(50, max(51, viewport_h - 50))
                     ActionChains(driver).move_to_element_with_offset(
                         body, mx - vw // 2, my - viewport_h // 2
-                    ).pause(random.uniform(0.05, 0.2)).perform()
+                    ).pause(random.uniform(0.1, 0.3)).perform()
                 except Exception:
                     pass
 
-            # Hover over a random link/button (no click — stay on page)
-            if random.random() < 0.35:
+            # Hover atas link/heading (tampak alami)
+            if random.random() < 0.4:
                 try:
-                    candidates = driver.find_elements(By.CSS_SELECTOR, "a, button, h2, h3, p")
-                    if candidates:
-                        el = random.choice(candidates[:12])
+                    candidates_el = driver.find_elements(
+                        By.CSS_SELECTOR, "a, button, h2, h3, h4, p, img")
+                    if candidates_el:
+                        el = random.choice(candidates_el[:15])
                         driver.execute_script(
-                            "arguments[0].scrollIntoView({block:'nearest', inline:'nearest'});", el)
-                        time.sleep(random.uniform(0.05, 0.15))
+                            "arguments[0].scrollIntoView({block:'nearest'});", el)
+                        time.sleep(random.uniform(0.05, 0.2))
                         ActionChains(driver).move_to_element(el).pause(
-                            random.uniform(0.1, 0.4)).perform()
+                            random.uniform(0.2, 0.6)).perform()
                 except Exception:
                     pass
 
-            # Occasionally scroll back a bit (re-reading)
-            if random.random() < 0.25:
-                back = max(0, stop - random.randint(80, 250))
+            # Scroll balik sedikit (re-reading behaviour)
+            if random.random() < 0.3:
+                back = max(0, stop - random.randint(100, 350))
                 _smooth_scroll(driver, back)
-                elapsed += random.uniform(0.3, 0.7)
-                time.sleep(elapsed - sum([0]))  # just sleep the back pause
+                back_pause = random.uniform(0.5, 1.2)
+                elapsed += back_pause
+                time.sleep(back_pause)
 
-        # Fill remaining stay_time at bottom
+        # Isi sisa stay_time di posisi bawah halaman
         remaining = stay_time - elapsed
         if remaining > 0:
             time.sleep(remaining)
 
     except Exception:
-        # Fallback: plain wait
         time.sleep(stay_time)
 
 
@@ -354,10 +445,15 @@ def visit_with_proxy(ip, port, target_url, timeout, stay_time, log_fn=print):
         driver = webdriver.Firefox(options=options, service=service)
         driver.set_page_load_timeout(timeout)
 
-        # ── Navigate to target ────────────────────────────────────────────
+        # ── [1] Organic referrer: singgah Google dulu ─────────────────────
+        # Traffic yang datang dari Google dinilai lebih berkualitas oleh
+        # ad network → lebih dipercaya → potensi CTR & CPM lebih tinggi.
+        _set_organic_referrer(driver, timeout)
+        log_fn(f"[REF] Google referrer set")
+
+        # ── [2] Navigate ke target ────────────────────────────────────────
         driver.get(target_url)
 
-        # Wait for body to appear (confirms page loaded, not just a timeout)
         try:
             WebDriverWait(driver, min(timeout, 15)).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
@@ -365,30 +461,22 @@ def visit_with_proxy(ip, port, target_url, timeout, stay_time, log_fn=print):
         except Exception:
             pass
 
-        # Short post-load pause (human looks at page before doing anything)
-        _human_delay(1.0, 3.0)
+        # Jeda awal (manusia butuh waktu orientasi saat halaman baru terbuka)
+        _human_delay(1.5, 3.5)
 
-        # Set mobile viewport if mobile UA
-        if is_mobile:
-            driver.execute_script(
-                f"Object.defineProperty(screen, 'width', {{get: function(){{return {width};}}}});"
-            )
-
-        # ── Natural mouse entry: move cursor from edge toward center ──────
+        # ── [3] Mouse masuk dari tepi layar ──────────────────────────────
         try:
             body = driver.find_element(By.TAG_NAME, "body")
             vw   = driver.execute_script("return window.innerWidth;")
             vh   = driver.execute_script("return window.innerHeight;")
 
-            # Start near top-left, drift toward center
             ActionChains(driver).move_to_element_with_offset(
                 body,
                 random.randint(-vw // 3, -vw // 6),
                 random.randint(-vh // 3, -vh // 6),
             ).perform()
-            _human_delay(0.1, 0.3)
+            _human_delay(0.1, 0.4)
 
-            # Drift to random reading position
             ActionChains(driver).move_to_element_with_offset(
                 body,
                 random.randint(-vw // 4, vw // 4),
@@ -397,9 +485,16 @@ def visit_with_proxy(ip, port, target_url, timeout, stay_time, log_fn=print):
         except Exception:
             pass
 
-        # ── Read page naturally (scroll + hover + pause) ──────────────────
-        actual_stay = stay_time + random.uniform(0, 5)
+        # ── [4] Baca halaman utama (scroll 100%, jeda panjang) ────────────
+        # stay_time default 25s + variasi acak → iklan punya cukup waktu
+        # untuk load, render, dan terhitung sebagai impression yang valid.
+        actual_stay = stay_time + random.uniform(2, 8)
         _read_page_naturally(driver, actual_stay)
+
+        # ── [5] Multi-page: kunjungi 1-2 halaman dalam ────────────────────
+        # Meningkatkan pageview depth per sesi → lebih banyak ad impression
+        # dan sinyal engagement yang lebih kuat ke ad network.
+        _visit_inner_pages(driver, target_url, log_fn)
 
         driver.quit()
         return True
