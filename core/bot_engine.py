@@ -4,7 +4,8 @@ from bs4 import BeautifulSoup
 import time
 import logging
 import subprocess
-import os
+import threading
+import queue as _queue
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from selenium import webdriver
 from selenium.webdriver.firefox.options import Options
@@ -19,9 +20,8 @@ DEFAULT_TIMEOUT   = 30
 DEFAULT_STAY_TIME = 5
 
 # ── Proxy validation settings ─────────────────────────────────────────────────
-VALIDATE_TIMEOUT = 8    # seconds per proxy check (HTTP only, very fast)
-VALIDATE_WORKERS = 50   # parallel threads for validation phase
-# Neutral lightweight endpoint — just checks connectivity, no side effects
+VALIDATE_TIMEOUT = 8    # seconds per HTTP check
+VALIDATE_WORKERS = 50   # parallel threads for validation
 VALIDATE_URL     = "http://httpbin.org/ip"
 
 # ── Proxy sources ─────────────────────────────────────────────────────────────
@@ -64,7 +64,6 @@ HEADERS = {
 # ── Fetchers ──────────────────────────────────────────────────────────────────
 
 def _fetch_api(name, url, log_fn):
-    """Fetch plain-text ip:port list from an API endpoint."""
     try:
         r = requests.get(url, timeout=15, headers=HEADERS)
         r.raise_for_status()
@@ -86,7 +85,6 @@ def _fetch_api(name, url, log_fn):
 
 
 def _fetch_html(url, log_fn):
-    """Fallback: scrape HTML table (free-proxy-list style)."""
     try:
         r = requests.get(url, timeout=15, headers=HEADERS)
         r.raise_for_status()
@@ -111,7 +109,6 @@ def _fetch_html(url, log_fn):
 
 
 def fetch_all_proxies(log_fn=print):
-    """Collect proxies from all sources. Returns deduplicated (ip, port) list."""
     seen   = set()
     result = []
 
@@ -136,11 +133,7 @@ def fetch_all_proxies(log_fn=print):
 # ── Proxy validator ───────────────────────────────────────────────────────────
 
 def _check_proxy(ip, port):
-    """
-    Quick connectivity check via plain HTTP request.
-    Returns True if the proxy responds successfully, False otherwise.
-    Much faster than opening a browser — used to pre-filter dead proxies.
-    """
+    """Quick HTTP connectivity check. Returns True if proxy is alive."""
     proxy_url = f"http://{ip}:{port}"
     try:
         r = requests.get(
@@ -154,58 +147,9 @@ def _check_proxy(ip, port):
         return False
 
 
-def validate_proxies(proxies, log_fn=print, stop_event=None):
-    """
-    Filter a raw proxy list down to only live ones using parallel HTTP checks.
-    Uses VALIDATE_WORKERS threads so 6000+ proxies finish in ~2-3 minutes
-    instead of hours.
-    """
-    total = len(proxies)
-    log_fn(f"[VALIDATE] Testing {total} proxies dengan {VALIDATE_WORKERS} thread paralel...")
-
-    alive      = []
-    dead_count = 0
-    checked    = 0
-    lock       = __import__('threading').Lock()
-
-    def _task(ip, port):
-        nonlocal dead_count, checked
-        if stop_event and stop_event.is_set():
-            return None
-        ok = _check_proxy(ip, port)
-        with lock:
-            checked += 1
-            if ok:
-                alive.append((ip, port))
-            else:
-                dead_count += 1
-            # log progress every 500 proxies
-            if checked % 500 == 0 or checked == total:
-                log_fn(
-                    f"[VALIDATE] Progress: {checked}/{total} | "
-                    f"✅ Hidup: {len(alive)} | ❌ Mati: {dead_count}"
-                )
-        return ok
-
-    with ThreadPoolExecutor(max_workers=VALIDATE_WORKERS) as exe:
-        futures = {exe.submit(_task, ip, port): (ip, port) for ip, port in proxies}
-        for f in as_completed(futures):
-            if stop_event and stop_event.is_set():
-                exe.shutdown(wait=False, cancel_futures=True)
-                break
-            f.result()  # surface any unexpected exceptions
-
-    log_fn(
-        f"[VALIDATE] Selesai — {len(alive)} proxy hidup dari {total} total "
-        f"({dead_count} proxy mati dihapus)"
-    )
-    return alive
-
-
 # ── Browser visitor ───────────────────────────────────────────────────────────
 
 def visit_with_proxy(ip, port, target_url, timeout, stay_time):
-    """Open Firefox headless through the given proxy and visit target_url."""
     options = Options()
     options.add_argument("--headless")
     options.set_preference("network.proxy.type",      1)
@@ -216,7 +160,7 @@ def visit_with_proxy(ip, port, target_url, timeout, stay_time):
     options.set_preference("network.proxy.ftp",       ip)
     options.set_preference("network.proxy.ftp_port",  port)
 
-    # Redirect geckodriver log to /dev/null → fixes version-mismatch noise
+    # Redirect geckodriver log to /dev/null — fixes version-mismatch noise
     service = Service(log_output=subprocess.DEVNULL)
 
     driver = None
@@ -236,7 +180,7 @@ def visit_with_proxy(ip, port, target_url, timeout, stay_time):
         return False
 
 
-# ── Main loop ─────────────────────────────────────────────────────────────────
+# ── Main loop (pipeline: validate + visit run in parallel) ────────────────────
 
 def run_bot(target_url=DEFAULT_TARGET, timeout=DEFAULT_TIMEOUT,
             stay_time=DEFAULT_STAY_TIME, log_fn=print,
@@ -251,21 +195,76 @@ def run_bot(target_url=DEFAULT_TARGET, timeout=DEFAULT_TIMEOUT,
         log_fn(f"[ROUND {stats['round']}] Mengumpulkan proxy dari semua sumber...")
 
         raw_proxies = fetch_all_proxies(log_fn)
-        log_fn(f"[INFO] {len(raw_proxies)} proxy unik ditemukan — mulai validasi cepat...")
+        total = len(raw_proxies)
+        log_fn(
+            f"[INFO] {total} proxy unik ditemukan — "
+            f"pipeline validasi + kunjungan dimulai bersamaan..."
+        )
 
-        # ── Step 1: filter dead proxies via fast HTTP check ───────────────
-        live_proxies = validate_proxies(raw_proxies, log_fn, stop_event)
+        # ── Pipeline queue: validator → Selenium visitor ──────────────────
+        # Proxy yang sudah terbukti hidup langsung masuk antrian,
+        # Selenium tidak perlu menunggu validasi 100% selesai.
+        live_queue       = _queue.Queue(maxsize=300)
+        validation_done  = threading.Event()
 
-        if not live_proxies:
-            log_fn("[WARN] Tidak ada proxy hidup ditemukan, langsung ke round berikutnya...")
-            continue
+        # Shared counters (guarded by lock)
+        _lock      = threading.Lock()
+        _alive     = [0]
+        _dead      = [0]
+        _checked   = [0]
 
-        log_fn(f"[INFO] {len(live_proxies)} proxy hidup siap digunakan untuk round {stats['round']}")
+        # ── Producer: validate proxies, push live ones to queue ───────────
+        def _validation_worker():
+            def _check_and_push(ip, port):
+                if stop_event and stop_event.is_set():
+                    return
+                ok = _check_proxy(ip, port)
+                with _lock:
+                    _checked[0] += 1
+                    if ok:
+                        _alive[0] += 1
+                        live_queue.put((ip, port))
+                    else:
+                        _dead[0] += 1
+                    c = _checked[0]
+                    if c % 500 == 0 or c == total:
+                        log_fn(
+                            f"[VALIDATE] Progress: {c}/{total} | "
+                            f"✅ Hidup: {_alive[0]} | ❌ Mati: {_dead[0]}"
+                        )
 
-        # ── Step 2: use only live proxies with Selenium ───────────────────
-        for ip, port in live_proxies:
-            if stop_event and stop_event.is_set():
-                break
+            with ThreadPoolExecutor(max_workers=VALIDATE_WORKERS) as exe:
+                fts = [exe.submit(_check_and_push, ip, port) for ip, port in raw_proxies]
+                for f in as_completed(fts):
+                    if stop_event and stop_event.is_set():
+                        exe.shutdown(wait=False, cancel_futures=True)
+                        break
+                    f.result()
+
+            log_fn(
+                f"[VALIDATE] Selesai — {_alive[0]} hidup, {_dead[0]} mati dihapus"
+            )
+            validation_done.set()
+
+        # Start validation in background
+        val_thread = threading.Thread(target=_validation_worker, daemon=True)
+        val_thread.start()
+
+        log_fn("[INFO] Menunggu proxy hidup pertama lalu langsung mulai kunjungan...")
+
+        # ── Consumer: visit with Selenium as live proxies arrive ──────────
+        while not (stop_event and stop_event.is_set()):
+            try:
+                ip, port = live_queue.get(timeout=1)
+            except _queue.Empty:
+                # Keep waiting if validation is still running
+                if not validation_done.is_set():
+                    continue
+                # Validation done and queue drained — round complete
+                if live_queue.empty():
+                    break
+                continue
+
             proxy_str = f"{ip}:{port}"
             stats['tried']        += 1
             stats['current_proxy'] = proxy_str
@@ -277,6 +276,8 @@ def run_bot(target_url=DEFAULT_TARGET, timeout=DEFAULT_TIMEOUT,
             else:
                 stats['failed'] += 1
                 log_fn(f"[FAIL] {proxy_str}")
+
+        val_thread.join(timeout=5)
 
         if not (stop_event and stop_event.is_set()):
             log_fn(f"[SLEEP] Round {stats['round']} selesai — tidur 10s")
