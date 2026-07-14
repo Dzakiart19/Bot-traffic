@@ -20,22 +20,24 @@ from selenium.webdriver.support import expected_conditions as EC
 logging.getLogger("selenium.webdriver.common.service").setLevel(logging.ERROR)
 logging.getLogger("selenium").setLevel(logging.ERROR)
 
-DEFAULT_TARGET    = "https://dramacina--dzeckart.replit.app"
-DEFAULT_TIMEOUT   = 30
-DEFAULT_STAY_TIME = 25   # Naik dari 5 → iklan perlu waktu load & terlihat
+DEFAULT_TARGET    = "https://dramain-aja.web.app"
+DEFAULT_TIMEOUT   = 35
+DEFAULT_STAY_TIME = 30   # SPA + iklan lazy-load butuh lebih banyak waktu
 
-# ── Organic search queries (Google referrer) ──────────────────────────────────
+# ── Organic search queries — relevan dengan konten site ───────────────────────
 SEARCH_QUERIES = [
-    "nonton drama korea online gratis",
-    "drama korea terbaru 2024 subtitle indonesia",
-    "watch korean drama free streaming",
-    "nonton drama china sub indo",
-    "drama romantis korea terbaru",
-    "streaming drama korea gratis",
-    "nonton film drama online",
-    "korean drama 2024 full episode",
-    "drama asia terbaru sub indo",
-    "nonton drama online subtitle",
+    "dramain aja nonton drama online",
+    "nonton drama korea sub indo dramain",
+    "drama mecha terbaru sub indonesia",
+    "nonton drama romantis korea gratis",
+    "streaming drama asia sub indo 2024",
+    "drama china terbaru subtitle indonesia gratis",
+    "nonton drama korea episode terbaru",
+    "drama romance action subtitle indonesia",
+    "dramabox drama korea eksklusif",
+    "nonton drama sulih suara indonesia",
+    "drama trending indonesia 2024",
+    "raja mecha terakhir nonton online",
 ]
 
 # ── Proxy validation settings ─────────────────────────────────────────────────
@@ -454,6 +456,7 @@ def visit_with_proxy(ip, port, target_url, timeout, stay_time, log_fn=print):
         # ── [2] Navigate ke target ────────────────────────────────────────
         driver.get(target_url)
 
+        # Tunggu body dulu
         try:
             WebDriverWait(driver, min(timeout, 15)).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
@@ -461,8 +464,22 @@ def visit_with_proxy(ip, port, target_url, timeout, stay_time, log_fn=print):
         except Exception:
             pass
 
+        # SPA (React/Firebase) butuh waktu ekstra render JS sebelum konten
+        # dan ad script benar-benar aktif — tunggu sampai ada konten nyata.
+        try:
+            WebDriverWait(driver, 12).until(
+                lambda d: d.execute_script(
+                    "return document.querySelectorAll('img, h1, h2, h3, a').length > 3"
+                )
+            )
+        except Exception:
+            pass
+
+        # Tunggu ad script (Adsterra) inject iframe/div ke halaman
+        time.sleep(random.uniform(2.5, 4.5))
+
         # Jeda awal (manusia butuh waktu orientasi saat halaman baru terbuka)
-        _human_delay(1.5, 3.5)
+        _human_delay(1.5, 3.0)
 
         # ── [3] Mouse masuk dari tepi layar ──────────────────────────────
         try:
