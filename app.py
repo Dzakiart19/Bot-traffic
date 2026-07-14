@@ -1,9 +1,20 @@
+import os
 import threading
 import datetime
 from flask import Flask, render_template, jsonify
 from flask_socketio import SocketIO, emit
-from core.bot_engine import (run_bot, DEFAULT_TARGET,
-                              DEFAULT_TIMEOUT, DEFAULT_STAY_TIME)
+
+try:
+    from core.bot_engine import (run_bot, DEFAULT_TARGET,
+                                  DEFAULT_TIMEOUT, DEFAULT_STAY_TIME)
+    _BOT_AVAILABLE = True
+except Exception as _import_err:
+    _BOT_AVAILABLE = False
+    DEFAULT_TARGET    = "https://dramacina--dzeckart.replit.app"
+    DEFAULT_TIMEOUT   = 30
+    DEFAULT_STAY_TIME = 5
+    def run_bot(*a, **kw):
+        pass
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'bot-monitor-secret'
@@ -47,9 +58,12 @@ def _run_bot():
     )
 
 
-# Auto-start: runs when gunicorn imports the module (works on autoscale)
-_bot_thread = threading.Thread(target=_run_bot, daemon=True)
-_bot_thread.start()
+# Auto-start bot thread (gracefully skipped if engine unavailable)
+if _BOT_AVAILABLE:
+    _bot_thread = threading.Thread(target=_run_bot, daemon=True)
+    _bot_thread.start()
+else:
+    stats['running'] = False
 
 
 # ── Routes ───────────────────────────────────────────────────
