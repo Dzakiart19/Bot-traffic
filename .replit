@@ -40,5 +40,5 @@ externalPort = 3000
 
 [deployment]
 deploymentTarget = "autoscale"
-run = ["bash", "-c", ".venv/bin/gunicorn --worker-class geventwebsocket.gunicorn.workers.GeventWebSocketWorker -w 1 app:app -b 0.0.0.0:5000"]
-build = ["bash", "-c", "python3 -m venv .venv && .venv/bin/pip install --upgrade pip && .venv/bin/pip install -r requirements.txt"]
+run = ["bash", "-c", "PYTHONPATH=./packages python3 -m gunicorn --worker-class geventwebsocket.gunicorn.workers.GeventWebSocketWorker -w 1 app:app -b 0.0.0.0:5000"]
+build = ["bash", "-c", "pip install --no-user --target=./packages -r requirements.txt"]
