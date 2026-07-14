@@ -3,6 +3,7 @@ import requests
 from bs4 import BeautifulSoup
 import time
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from selenium import webdriver
 from selenium.webdriver.firefox.options import Options
 
