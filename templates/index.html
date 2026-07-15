@@ -361,15 +361,35 @@
     }
 
     /* JS Dynamic Classes */
-    .log-line.ok     { color: var(--color-success); border-left-color: var(--color-success-dim); }
-    .log-line.fail   { color: var(--color-error); border-left-color: var(--color-error-dim); }
-    .log-line.try    { color: var(--text-muted); }
-    .log-line.fetch  { color: var(--color-info); }
-    .log-line.info   { color: var(--color-warn); }
-    .log-line.sleep  { color: var(--text-dim); }
-    .log-line.start  { color: var(--color-success); font-weight: 700; border-left-color: var(--color-success); background: rgba(16,185,129,0.05); }
-    .log-line.warn   { color: var(--color-warn); }
-    .log-line.err    { color: var(--color-error); border-left-color: var(--color-error); }
+    .log-line.ok      { color: var(--color-success); border-left-color: var(--color-success); background: rgba(16,185,129,0.04); }
+    .log-line.fail    { color: var(--color-error); border-left-color: var(--color-error-dim); }
+    .log-line.try     { color: var(--text-muted); }
+    .log-line.fetch   { color: var(--color-info); }
+    .log-line.info    { color: var(--color-warn); }
+    .log-line.sleep   { color: var(--text-dim); }
+    .log-line.start   { color: var(--color-success); font-weight: 700; border-left-color: var(--color-success); background: rgba(16,185,129,0.05); }
+    .log-line.warn    { color: var(--color-warn); }
+    .log-line.err     { color: var(--color-error); border-left-color: var(--color-error); }
+
+    /* ── Real-time action classes ── */
+    /* [TYPE]   — ketikan karakter, update in-place */
+    .log-line.type    { color: #22d3ee; border-left-color: rgba(34,211,238,0.4); letter-spacing: 0.02em; }
+    /* [SCROLL] — posisi scroll, update in-place */
+    .log-line.scroll  { color: #818cf8; border-left-color: rgba(129,140,248,0.4); }
+    /* [CLICK]  — klik mouse */
+    .log-line.click   { color: #fb923c; border-left-color: rgba(251,146,60,0.5); background: rgba(251,146,60,0.03); }
+    /* [HOVER]  — mouse hover elemen */
+    .log-line.hover   { color: var(--text-dim); border-left-color: transparent; font-style: italic; }
+    /* [NAV]    — navigasi halaman */
+    .log-line.nav     { color: #34d399; border-left-color: rgba(52,211,153,0.4); }
+    /* [STEALTH]— injeksi anti-bot */
+    .log-line.stealth { color: #a78bfa; border-left-color: rgba(167,139,250,0.5); background: rgba(167,139,250,0.04); }
+    /* [REF]    — referrer */
+    .log-line.ref     { color: #4ade80; border-left-color: rgba(74,222,128,0.3); }
+    /* [INNER]  — halaman dalam */
+    .log-line.inner   { color: #67e8f9; border-left-color: rgba(103,232,249,0.4); }
+    /* [VALIDATE]— validasi proxy */
+    .log-line.validate{ color: var(--text-muted); }
 
     .empty-state {
       display: flex;
@@ -561,29 +581,71 @@
   }
 
   function classForLine(msg) {
-    if (msg.startsWith('[OK]'))      return 'ok';
-    if (msg.startsWith('[FAIL]'))    return 'fail';
-    if (msg.startsWith('[TRY]'))     return 'try';
-    if (msg.startsWith('[FETCH]'))   return 'fetch';
-    if (msg.startsWith('[INFO]'))    return 'info';
-    if (msg.startsWith('[SLEEP]'))   return 'sleep';
-    if (msg.startsWith('[START]'))   return 'start';
-    if (msg.startsWith('[ROUND]'))   return 'info';
-    if (msg.startsWith('[WARN]'))    return 'warn';
-    if (msg.startsWith('[ERROR]'))   return 'err';
+    if (msg.startsWith('[OK]'))       return 'ok';
+    if (msg.startsWith('[FAIL]'))     return 'fail';
+    if (msg.startsWith('[TRY]'))      return 'try';
+    if (msg.startsWith('[FETCH]'))    return 'fetch';
+    if (msg.startsWith('[INFO]'))     return 'info';
+    if (msg.startsWith('[SLEEP]'))    return 'sleep';
+    if (msg.startsWith('[START]'))    return 'start';
+    if (msg.startsWith('[ROUND]'))    return 'info';
+    if (msg.startsWith('[WARN]'))     return 'warn';
+    if (msg.startsWith('[ERROR]'))    return 'err';
+    if (msg.startsWith('[TYPE]'))     return 'type';
+    if (msg.startsWith('[SCROLL]'))   return 'scroll';
+    if (msg.startsWith('[CLICK]'))    return 'click';
+    if (msg.startsWith('[HOVER]'))    return 'hover';
+    if (msg.startsWith('[NAV]'))      return 'nav';
+    if (msg.startsWith('[STEALTH]'))  return 'stealth';
+    if (msg.startsWith('[REF]'))      return 'ref';
+    if (msg.startsWith('[INNER]'))    return 'inner';
+    if (msg.startsWith('[VALIDATE]')) return 'validate';
     return 'try';
   }
+
+  // Track in-place update lines — [TYPE] dan [SCROLL] update baris yang sama
+  // agar tidak spam ratusan baris baru saat bot mengetik / scroll.
+  let lastTypeLine   = null;
+  let lastScrollLine = null;
 
   function appendLog(msg) {
     const empty = document.getElementById('emptyState');
     if (empty) empty.remove();
+
+    // ── In-place update: [TYPE] ──────────────────────────────────────────
+    if (msg.startsWith('[TYPE]')) {
+      if (lastTypeLine) {
+        lastTypeLine.textContent = msg;
+        if (autoScroll) logEl.scrollTop = logEl.scrollHeight;
+        return;
+      }
+    } else if (!msg.startsWith('[SCROLL]')) {
+      // Non-TYPE, non-SCROLL message resets the type tracker
+      lastTypeLine = null;
+    }
+
+    // ── In-place update: [SCROLL] ────────────────────────────────────────
+    if (msg.startsWith('[SCROLL]')) {
+      if (lastScrollLine) {
+        lastScrollLine.textContent = msg;
+        if (autoScroll) logEl.scrollTop = logEl.scrollHeight;
+        return;
+      }
+    } else if (!msg.startsWith('[TYPE]')) {
+      lastScrollLine = null;
+    }
+
+    // ── Normal append ────────────────────────────────────────────────────
     const line = document.createElement('div');
     line.className = 'log-line ' + classForLine(msg);
     line.textContent = msg;
     logEl.appendChild(line);
     lineCount++;
-    if (lineCount > 800) { logEl.removeChild(logEl.firstChild); lineCount--; }
+    if (lineCount > 1000) { logEl.removeChild(logEl.firstChild); lineCount--; }
     if (autoScroll) logEl.scrollTop = logEl.scrollHeight;
+
+    if (msg.startsWith('[TYPE]'))   lastTypeLine   = line;
+    if (msg.startsWith('[SCROLL]')) lastScrollLine = line;
   }
 
   function updateStats(stats) {
