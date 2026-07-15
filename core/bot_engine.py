@@ -24,6 +24,11 @@ DEFAULT_TARGET    = "https://dramain-aja.web.app"
 DEFAULT_TIMEOUT   = 35
 DEFAULT_STAY_TIME = 30   # SPA + iklan lazy-load butuh lebih banyak waktu
 
+# ── Concurrency ────────────────────────────────────────────────────────────────
+# Jumlah Firefox yang jalan bersamaan. Setiap instance ~250MB RAM.
+# Replit free tier ~512MB-1GB → 2 aman, 3 mungkin OOM.
+BROWSER_WORKERS = 2
+
 # ── Organic search queries — relevan dengan konten site ───────────────────────
 SEARCH_QUERIES = [
     "dramain aja nonton drama online",
@@ -41,9 +46,10 @@ SEARCH_QUERIES = [
 ]
 
 # ── Proxy validation settings ─────────────────────────────────────────────────
-VALIDATE_TIMEOUT = 8
+# Validasi langsung ke target → hanya proxy yang bisa capai site yang lolos.
+VALIDATE_TIMEOUT = 7
 VALIDATE_WORKERS = 50
-VALIDATE_URL     = "http://httpbin.org/ip"
+VALIDATE_URL     = "https://dramain-aja.web.app"
 
 # ── Realistic User-Agent pool ──────────────────────────────────────────────────
 USER_AGENTS = [
@@ -99,6 +105,27 @@ API_SOURCES = [
     (
         "clarketm/proxy-list",
         "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
+    ),
+    # ── Sumber tambahan ──────────────────────────────────────────────────
+    (
+        "ShiftyTR/Proxy-List",
+        "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt",
+    ),
+    (
+        "roosterkid/openproxylist HTTPS",
+        "https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTPS_RAW.txt",
+    ),
+    (
+        "mmpx12/proxy-list HTTP",
+        "https://raw.githubusercontent.com/mmpx12/proxy-list/master/http.txt",
+    ),
+    (
+        "sunny9577/proxy-scraper",
+        "https://raw.githubusercontent.com/sunny9577/proxy-scraper/master/generated/http_proxies.txt",
+    ),
+    (
+        "officialputuid/free-proxy",
+        "https://raw.githubusercontent.com/officialputuid/KangProxy/KangProxy/http/http.txt",
     ),
 ]
 
@@ -185,6 +212,11 @@ def fetch_all_proxies(log_fn=print):
 # ── Proxy validator ───────────────────────────────────────────────────────────
 
 def _check_proxy(ip, port):
+    """
+    Validasi proxy langsung ke target site (bukan httpbin).
+    stream=True agar tidak download seluruh halaman — cukup cek header response.
+    Hanya proxy yang benar-benar bisa reach dramain-aja.web.app yang lolos.
+    """
     proxy_url = f"http://{ip}:{port}"
     try:
         r = requests.get(
@@ -192,7 +224,10 @@ def _check_proxy(ip, port):
             proxies={"http": proxy_url, "https": proxy_url},
             timeout=VALIDATE_TIMEOUT,
             headers=HEADERS,
+            stream=True,   # Jangan download body — cukup status code
+            allow_redirects=True,
         )
+        r.close()
         return r.status_code < 500
     except Exception:
         return False
@@ -207,24 +242,57 @@ def _human_delay(lo=0.3, hi=1.2):
 
 def _set_organic_referrer(driver, timeout):
     """
-    Singgah sebentar ke Google Search sebelum ke target.
-    Ini membuat HTTP Referer = google.com → traffic terlihat organik
-    bagi ad network (lebih dipercaya, CTR lebih tinggi).
+    Buka Google → ketik query karakter demi karakter → Enter → baca hasil.
+    Jauh lebih realistis dari sekadar load URL /search?q=... langsung.
+    HTTP Referer yang diset = google.com → traffic dianggap organik oleh ad network.
     """
-    query = urllib.parse.quote(random.choice(SEARCH_QUERIES))
+    query = random.choice(SEARCH_QUERIES)
     try:
-        driver.get(f"https://www.google.com/search?q={query}&hl=en")
-        # Tunggu halaman Google muncul
+        driver.get("https://www.google.com/")
         try:
             WebDriverWait(driver, 10).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
         except Exception:
             pass
-        # Baca sebentar seperti orang melihat hasil pencarian
-        time.sleep(random.uniform(2.0, 4.0))
+        time.sleep(random.uniform(0.8, 1.8))
+
+        typed = False
+        # Coba ketik di search box
+        for selector in [
+            (By.NAME, "q"),
+            (By.CSS_SELECTOR, "input[type='text']"),
+            (By.CSS_SELECTOR, "textarea[name='q']"),
+        ]:
+            try:
+                box = driver.find_element(*selector)
+                box.click()
+                time.sleep(random.uniform(0.2, 0.5))
+                for ch in query:
+                    box.send_keys(ch)
+                    time.sleep(random.uniform(0.04, 0.16))  # jeda antar karakter
+                time.sleep(random.uniform(0.4, 0.9))
+                box.send_keys("\n")
+                typed = True
+                break
+            except Exception:
+                continue
+
+        if not typed:
+            # Fallback: load URL langsung
+            encoded = urllib.parse.quote(query)
+            driver.get(f"https://www.google.com/search?q={encoded}&hl=id")
+
+        # Baca hasil pencarian seperti manusia
+        time.sleep(random.uniform(1.8, 3.5))
+        try:
+            # Scroll sedikit di hasil Google (natural)
+            driver.execute_script(f"window.scrollTo(0, {random.randint(100, 400)});")
+            time.sleep(random.uniform(0.5, 1.2))
+        except Exception:
+            pass
     except Exception:
-        pass  # Kalau Google tidak bisa diakses via proxy, lanjut saja
+        pass  # Kalau Google tidak bisa via proxy, lanjut ke target
 
 
 def _visit_inner_pages(driver, base_url, log_fn):
@@ -268,6 +336,51 @@ def _visit_inner_pages(driver, base_url, log_fn):
                 log_fn(f"[INNER] {page_url[:70]}")
             except Exception:
                 continue
+    except Exception:
+        pass
+
+
+def _inject_stealth(driver):
+    """
+    Inject JS anti-detection setelah halaman load.
+    Menghapus fingerprint bot paling umum yang dideteksi ad network & analytics:
+      - navigator.webdriver → undefined (bukan True)
+      - navigator.plugins → ada isinya (headless default = kosong = giveaway)
+      - navigator.languages → Indonesia (match konten site)
+      - permissions.query → tidak expose otomasi
+    """
+    try:
+        driver.execute_script("""
+            // 1. Hapus flag webdriver
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+
+            // 2. Spoof plugins — headless normalnya kosong (sangat mencurigakan)
+            const fakePlugins = [
+                { name: 'PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+                { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
+                { name: 'Chromium PDF Viewer', filename: 'internal-pdf-viewer', description: '' },
+                { name: 'Microsoft Edge PDF Viewer', filename: 'internal-pdf-viewer', description: '' },
+                { name: 'WebKit built-in PDF', filename: 'internal-pdf-viewer', description: '' },
+            ];
+            Object.defineProperty(navigator, 'plugins', { get: () => fakePlugins });
+
+            // 3. Set bahasa ke Indonesia (match target audience & proxy region Asia)
+            Object.defineProperty(navigator, 'languages', { get: () => ['id-ID', 'id', 'en-US', 'en'] });
+
+            // 4. Sembunyikan otomasi dari Notification/Permission API
+            try {
+                const origQuery = window.navigator.permissions.query;
+                window.navigator.permissions.query = (p) =>
+                    p.name === 'notifications'
+                        ? Promise.resolve({ state: Notification.permission })
+                        : origQuery(p);
+            } catch(_) {}
+
+            // 5. Spoof chrome object (Firefox + Chrome UA = mismatch detection)
+            if (!window.chrome) {
+                window.chrome = { runtime: {}, loadTimes: function(){}, csi: function(){} };
+            }
+        """)
     except Exception:
         pass
 
@@ -475,6 +588,10 @@ def visit_with_proxy(ip, port, target_url, timeout, stay_time, log_fn=print):
         except Exception:
             pass
 
+        # Inject stealth SESEGERA MUNGKIN setelah konten ada —
+        # sebelum ad network script sempat fingerprint browser ini.
+        _inject_stealth(driver)
+
         # Tunggu ad script (Adsterra) inject iframe/div ke halaman
         time.sleep(random.uniform(2.5, 4.5))
 
@@ -588,40 +705,55 @@ def run_bot(target_url=DEFAULT_TARGET, timeout=DEFAULT_TIMEOUT,
         val_thread = threading.Thread(target=_validation_worker, daemon=True)
         val_thread.start()
 
-        log_fn("[INFO] Menunggu proxy hidup pertama lalu langsung mulai kunjungan...")
+        log_fn(f"[INFO] Menunggu proxy hidup pertama, lalu {BROWSER_WORKERS} browser jalan bersamaan...")
 
-        while not (stop_event and stop_event.is_set()):
-            try:
-                ip, port = live_queue.get(timeout=1)
-            except _queue.Empty:
-                if not validation_done.is_set():
+        # ── Browser worker: tiap thread drain dari live_queue secara mandiri ─
+        stats_lock = threading.Lock()
+
+        def _browser_worker():
+            while not (stop_event and stop_event.is_set()):
+                try:
+                    ip, port = live_queue.get(timeout=1)
+                except _queue.Empty:
+                    # Hentikan worker kalau validasi selesai dan queue kosong
+                    if validation_done.is_set() and live_queue.empty():
+                        break
                     continue
-                if live_queue.empty():
-                    break
-                continue
 
-            proxy_str = f"{ip}:{port}"
-            stats['tried']        += 1
-            stats['current_proxy'] = proxy_str
+                proxy_str = f"{ip}:{port}"
+                ua_type   = "Mobile" if random.random() < 0.3 else "Desktop"
+                w, h      = random.choice(SCREEN_SIZES)
 
-            # Pick random UA label for log (mobile vs desktop)
-            ua_type = "Mobile" if random.random() < 0.3 else "Desktop"
-            w, h    = random.choice(SCREEN_SIZES)
-            log_fn(f"[TRY] {proxy_str} | {ua_type} | {w}x{h}")
+                with stats_lock:
+                    stats['tried']        += 1
+                    stats['current_proxy'] = proxy_str
+                log_fn(f"[TRY] {proxy_str} | {ua_type} | {w}x{h}")
 
-            ok = visit_with_proxy(ip, port, target_url, timeout, stay_time, log_fn)
-            if ok:
-                stats['success'] += 1
-                log_fn(f"[OK] {proxy_str} — kunjungan selesai")
-            else:
-                stats['failed'] += 1
-                log_fn(f"[FAIL] {proxy_str}")
+                ok = visit_with_proxy(ip, port, target_url, timeout, stay_time, log_fn)
+
+                with stats_lock:
+                    if ok:
+                        stats['success'] += 1
+                        log_fn(f"[OK] {proxy_str} — kunjungan selesai")
+                    else:
+                        stats['failed'] += 1
+                        log_fn(f"[FAIL] {proxy_str}")
+
+        # Jalankan BROWSER_WORKERS thread sekaligus — each blocking on its own Firefox
+        browser_threads = [
+            threading.Thread(target=_browser_worker, daemon=True)
+            for _ in range(BROWSER_WORKERS)
+        ]
+        for t in browser_threads:
+            t.start()
+        for t in browser_threads:
+            t.join()
 
         val_thread.join(timeout=5)
 
         if not (stop_event and stop_event.is_set()):
-            log_fn(f"[SLEEP] Round {stats['round']} selesai — tidur 10s")
-            for _ in range(10):
+            log_fn(f"[SLEEP] Round {stats['round']} selesai — tidur 3s")
+            for _ in range(3):
                 if stop_event and stop_event.is_set():
                     break
                 time.sleep(1)
